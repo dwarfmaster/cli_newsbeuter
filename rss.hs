@@ -67,12 +67,20 @@ updateFeed c (RSSFeed r       u t) = do update_if c r u "url"
           update_if c (Just r) (Just v) s = do run c ("UPDATE rss_feed SET " ++ s ++ " = ? WHERE rssurl = ?") [toSql v, toSql r]
                                                return()
 
+addItem :: (IConnection c) => c -> RSSItem -> IO()
+addItem conn it = do x <- quickQuery' conn "SELECT MAX(id) FROM rss_item" []
+                     run conn "INSERT INTO rss_item (guid,title,author,url,feedurl,pubDate,content,unread,enclosure_url,enclosure_type) VALUES ('','','','','',0,'',1,'','')" []
+                     updateItem conn $ setId it $ (pop x) + 1
+    where pop :: [[SqlValue]] -> Integer
+          pop x = fromSql $ head $ head x
+          setId (RSSItem t u f d a g p eu et _ ur) id = RSSItem t u f d a g p eu et (Just id) ur
+
 updateItem :: (IConnection c) => c -> RSSItem -> IO()
 updateItem _ (RSSItem _ _ _ _ _ _ _ _  _  Nothing _)   = return()
 updateItem c (RSSItem t u f d a g p eu et id      urd) = do update_if c t  id "title"
                                                             update_if c u  id "url"
                                                             update_if c f  id "feedurl"
-                                                            update_if c d  id "description"
+                                                            update_if c d  id "content"
                                                             update_if c a  id "author"
                                                             update_if c g  id "guid"
                                                             update_if c p  id "pubDate"
