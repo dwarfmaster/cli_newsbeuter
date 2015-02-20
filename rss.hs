@@ -60,13 +60,31 @@ addFeed conn fd = do insert_if conn r
           insert_if _ Nothing = return()
 
 updateFeed :: (IConnection c) => c -> RSSFeed -> IO()
-updateFeed conn fd = do update_if conn r u "url"
-                        update_if conn r t "title"
-    where r = fd_rssurl fd
-          u = fd_url fd
-          t = fd_title fd
-          update_if _ Nothing _ _ = return()
-          update_if _ _ Nothing _ = return()
+updateFeed _ (RSSFeed Nothing _ _) = return()
+updateFeed c (RSSFeed r       u t) = do update_if c r u "url"
+                                        update_if c r t "title"
+    where update_if _ _ Nothing _ = return()
           update_if c (Just r) (Just v) s = do run c ("UPDATE rss_feed SET " ++ s ++ " = ? WHERE rssurl = ?") [toSql v, toSql r]
                                                return()
+
+updateItem :: (IConnection c) => c -> RSSItem -> IO()
+updateItem _ (RSSItem _ _ _ _ _ _ _ _  _  Nothing _)   = return()
+updateItem c (RSSItem t u f d a g p eu et id      urd) = do update_if c t  id "title"
+                                                            update_if c u  id "url"
+                                                            update_if c f  id "feedurl"
+                                                            update_if c d  id "description"
+                                                            update_if c a  id "author"
+                                                            update_if c g  id "guid"
+                                                            update_if c p  id "pubDate"
+                                                            update_if c eu id "enclosure_url"
+                                                            update_if c et id "enclosure_type"
+                                                            update_if c ur id "unread"
+    where ur = bti urd
+          update_if _ Nothing   _        _ = return()
+          update_if c (Just v) (Just id) s = do run c ("UPDATE rss_item SET " ++ s ++ " = ? WHERE id = ?") [toSql v, toSql id]
+                                                return()
+          bti :: Maybe Bool -> Maybe Int
+          bti Nothing      = Nothing
+          bti (Just True)  = Just 1
+          bti (Just False) = Just 0
 
