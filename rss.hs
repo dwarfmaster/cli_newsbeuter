@@ -34,6 +34,7 @@ loadFeeds conn = (fmap . map) rowToFeed $ quickQuery' conn "SELECT rssurl,url,ti
           rowToFeed (r:u:t:[]) = RSSFeed (Just $ fromSql r) (Just $ fromSql u) (Just $ fromSql t)
 
 loadFeedItems :: (IConnection c) => c -> RSSFeed -> IO [RSSItem]
+loadFeedItems _ (RSSFeed Nothing _ _) = return []
 loadFeedItems conn fd = (fmap . map) rowToItem $ quickQuery' conn "SELECT title,url,feedurl,author,guid,pubDate,enclosure_url,enclosure_type,id,unread FROM rss_item WHERE feedurl = ?" [url]
     where url = toSql $ fd_rssurl fd
           rowToItem :: [SqlValue] -> RSSItem
@@ -44,7 +45,10 @@ loadFeedItems conn fd = (fmap . map) rowToItem $ quickQuery' conn "SELECT title,
               where mfsql :: (Convertible SqlValue a) => SqlValue -> Maybe a
                     mfsql v = Just $ fromSql v
                     bfsql :: SqlValue -> Maybe Bool
-                    bfsql v = Just True -- TODO read
+                    bfsql v = Just $ intToBool $ fromSql v
+                        where intToBool :: Int -> Bool
+                              intToBool 0 = False
+                              intToBool _ = True
 
 -- Database writing (caller must call commit itself)
 addFeed :: (IConnection c) => c -> RSSFeed -> IO ()
