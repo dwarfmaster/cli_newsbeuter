@@ -22,19 +22,30 @@ data RSSItem = RSSItem { it_title       :: Maybe String
                        , it_id          :: Maybe Integer
                        , it_unread      :: Maybe Bool
                        } deriving (Show)
+data FDType  = Plain | Filter | Exec
 data RSSFeed = RSSFeed { fd_rssurl :: Maybe String
                        , fd_url    :: Maybe String
                        , fd_title  :: Maybe String
+                       , fd_type   :: Maybe FDType
+                       , fd_tags   :: Maybe [String]
                        } deriving (Show)
+
+-- Data classes
+showFDType :: FDType -> String
+showFDType Plain  = "Plain"
+showFDType Filter = "Filter"
+showFDType Exec   = "Exec"
+instance Show FDType where
+    show = showFDType
 
 -- Database Querying
 loadFeeds :: (IConnection c) => c -> IO [RSSFeed]
 loadFeeds conn = (fmap . map) rowToFeed $ quickQuery' conn "SELECT rssurl,url,title FROM rss_feed" []
     where rowToFeed :: [SqlValue] -> RSSFeed
-          rowToFeed (r:u:t:[]) = RSSFeed (Just $ fromSql r) (Just $ fromSql u) (Just $ fromSql t)
+          rowToFeed (r:u:t:[]) = RSSFeed (Just $ fromSql r) (Just $ fromSql u) (Just $ fromSql t) Nothing Nothing
 
 loadFeedItems :: (IConnection c) => c -> RSSFeed -> IO [RSSItem]
-loadFeedItems _ (RSSFeed Nothing _ _) = return []
+loadFeedItems _ (RSSFeed Nothing _ _ _ _) = return []
 loadFeedItems conn fd = (fmap . map) rowToItem $ quickQuery' conn "SELECT title,url,feedurl,author,guid,pubDate,enclosure_url,enclosure_type,id,unread FROM rss_item WHERE feedurl = ?" [url]
     where url = toSql $ fd_rssurl fd
           rowToItem :: [SqlValue] -> RSSItem
@@ -60,9 +71,9 @@ addFeed conn fd = do insert_if conn r
           insert_if _ Nothing = return()
 
 updateFeed :: (IConnection c) => c -> RSSFeed -> IO()
-updateFeed _ (RSSFeed Nothing _ _) = return()
-updateFeed c (RSSFeed r       u t) = do update_if c r u "url"
-                                        update_if c r t "title"
+updateFeed _ (RSSFeed Nothing _ _ _ _) = return()
+updateFeed c (RSSFeed r       u t _ _) = do update_if c r u "url"
+                                            update_if c r t "title"
     where update_if _ _ Nothing _ = return()
           update_if c (Just r) (Just v) s = do run c ("UPDATE rss_feed SET " ++ s ++ " = ? WHERE rssurl = ?") [toSql v, toSql r]
                                                return()
@@ -95,4 +106,33 @@ updateItem c (RSSItem t u f d a g p eu et id      urd) = do update_if c t  id "t
           bti Nothing      = Nothing
           bti (Just True)  = Just 1
           bti (Just False) = Just 0
+
+-- Load RSSFeeds from url file
+cutLine :: String -> String -> Bool -> [String]
+cutLine ""       ""    _     = []
+cutLine ""       chunk _     = [chunk]
+cutLine ('"':ls) ""    True  = cutLine ls "" False
+cutLine ('"':ls) chunk True  = chunk : cutLine ls "" False
+cutLine (l:ls)   chunk True  = cutLine ls (chunk ++ [l]) True
+cutLine ('"':ls) ""    False = cutLine ls "" True
+cutLine ('"':ls) chunk False = chunk:cutLine ls "" True
+cutLine (l:ls)   chunk False = if isBlank l then if chunk == "" then cutLine ls "" False
+                                                 else chunk : cutLine ls "" False
+                               else cutLine ls (chunk ++ [l]) False
+    where isBlank ' '  = True
+          isBlank '\t' = True
+          isBlank '\n' = True
+          isBlank  _   = False
+
+loadFeedsFromFile :: FilePath -> IO [RSSFeed]
+loadFeedsFromFile ""   = return []
+loadFeedsFromFile path = fmap rmNothing $ (fmap.map) parseLine $ (fmap lines . readFile) path
+    where rmNothing :: [Maybe RSSFeed] -> [RSSFeed]
+          rmNothing  []           = []
+          rmNothing (Nothing:rs)  = rmNothing rs
+          rmNothing ((Just r):rs) = r:rmNothing rs
+          parseLine :: String -> Maybe RSSFeed
+          parseLine str = if length parts == 0 then Nothing
+                          else Just $ RSSFeed (Just $ head parts) Nothing Nothing Nothing (Just $ tail parts)
+              where parts = cutLine str "" False
 
