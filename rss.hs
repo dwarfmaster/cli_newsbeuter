@@ -44,7 +44,8 @@ rowToFeed (r:u:t:[]) = RSSFeed (Just $ fromSql r) (Just $ fromSql u) (Just $ fro
 rowToFeed _          = RSSFeed Nothing Nothing Nothing Nothing Nothing
 
 loadFeeds :: (IConnection c) => c -> IO [RSSFeed]
-loadFeeds conn = (fmap . map) rowToFeed $ quickQuery' conn "SELECT rssurl,url,title FROM rss_feed" []
+loadFeeds conn = do rows <- quickQuery' conn "SELECT rssurl,url,title FROM rss_feed" []
+                    return $ map rowToFeed rows
 
 hasFeed :: (IConnection c) => c -> RSSFeed -> IO Bool
 hasFeed _    (RSSFeed Nothing _ _ _ _) = return False
@@ -52,17 +53,16 @@ hasFeed conn (RSSFeed rssurl  _ _ _ _) = do lst <- quickQuery' conn "SELECT rssu
                                             return (length lst /= 0)
 
 populateFeed :: (IConnection c) => c -> RSSFeed -> IO RSSFeed
-populateFeed conn fd = fmg $ frowToFeed $ fhead $ quickQuery' conn "SELECT rssurl,url,title FROM rss_feed WHERE rssurl = ?" [rurl]
+populateFeed conn fd = do query <- quickQuery' conn "SELECT rssurl,url,title FROM rss_feed WHERE rssurl = ?" [rurl]
+                          return $ mergeTwo fd $ rowToFeed $ head query
     where rurl       = toSql $ fd_rssurl fd
-          fhead      = fmap head
-          frowToFeed = fmap rowToFeed
-          fmg        = fmap (mergeTwo fd)
           mergeTwo :: RSSFeed -> RSSFeed -> RSSFeed
           mergeTwo (RSSFeed rss _ _ _ tgs) (RSSFeed _ u t _ _) = RSSFeed rss u t Nothing tgs
 
 loadFeedItems :: (IConnection c) => c -> RSSFeed -> IO [RSSItem]
 loadFeedItems _ (RSSFeed Nothing _ _ _ _) = return []
-loadFeedItems conn fd = (fmap . map) rowToItem $ quickQuery' conn "SELECT title,url,feedurl,author,guid,pubDate,enclosure_url,enclosure_type,id,unread FROM rss_item WHERE feedurl = ?" [url]
+loadFeedItems conn fd = do query <- quickQuery' conn "SELECT title,url,feedurl,author,guid,pubDate,enclosure_url,enclosure_type,id,unread FROM rss_item WHERE feedurl = ?" [url]
+                           return $ map rowToItem query
     where url = toSql $ fd_rssurl fd
           rowToItem :: [SqlValue] -> RSSItem
           rowToItem (t:u:f:a:g:p:eu:et:id:ur:[]) = RSSItem (mfsql t)  (mfsql u)  (mfsql f)
@@ -132,9 +132,10 @@ cutLine ('"':ls) chunk True  = chunk : cutLine ls "" False
 cutLine (l:ls)   chunk True  = cutLine ls (chunk ++ [l]) True
 cutLine ('"':ls) ""    False = cutLine ls "" True
 cutLine ('"':ls) chunk False = chunk:cutLine ls "" True
-cutLine (l:ls)   chunk False = if isBlank l then if chunk == "" then cutLine ls "" False
-                                                 else chunk : cutLine ls "" False
-                               else cutLine ls (chunk ++ [l]) False
+cutLine (l:ls)   chunk False
+     | isBlank l = if chunk == "" then cutLine ls "" False
+                   else chunk : cutLine ls "" False
+     | otherwise = cutLine ls (chunk ++ [l]) False
     where isBlank ' '  = True
           isBlank '\t' = True
           isBlank '\n' = True
@@ -142,13 +143,15 @@ cutLine (l:ls)   chunk False = if isBlank l then if chunk == "" then cutLine ls 
 
 loadFeedsFromFile :: FilePath -> IO [RSSFeed]
 loadFeedsFromFile ""   = return []
-loadFeedsFromFile path = fmap rmNothing $ (fmap.map) parseLine $ (fmap lines . readFile) path
+loadFeedsFromFile path = do file <- readFile path
+                            return $ rmNothing $ map parseLine $ lines file
     where rmNothing :: [Maybe RSSFeed] -> [RSSFeed]
           rmNothing  []           = []
           rmNothing (Nothing:rs)  = rmNothing rs
           rmNothing ((Just r):rs) = r:rmNothing rs
           parseLine :: String -> Maybe RSSFeed
-          parseLine str = if length parts == 0 then Nothing
-                          else Just $ RSSFeed (Just $ head parts) Nothing Nothing Nothing (Just $ tail parts)
+          parseLine str
+               | parts == [] = Nothing
+               | otherwise   = Just $ RSSFeed (Just $ head parts) Nothing Nothing Nothing (Just $ tail parts)
               where parts = cutLine str "" False
 
