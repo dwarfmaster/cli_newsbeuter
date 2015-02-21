@@ -39,10 +39,26 @@ instance Show FDType where
     show = showFDType
 
 -- Database Querying
+rowToFeed :: [SqlValue] -> RSSFeed
+rowToFeed (r:u:t:[]) = RSSFeed (Just $ fromSql r) (Just $ fromSql u) (Just $ fromSql t) Nothing Nothing
+rowToFeed _          = RSSFeed Nothing Nothing Nothing Nothing Nothing
+
 loadFeeds :: (IConnection c) => c -> IO [RSSFeed]
 loadFeeds conn = (fmap . map) rowToFeed $ quickQuery' conn "SELECT rssurl,url,title FROM rss_feed" []
-    where rowToFeed :: [SqlValue] -> RSSFeed
-          rowToFeed (r:u:t:[]) = RSSFeed (Just $ fromSql r) (Just $ fromSql u) (Just $ fromSql t) Nothing Nothing
+
+hasFeed :: (IConnection c) => c -> RSSFeed -> IO Bool
+hasFeed _    (RSSFeed Nothing _ _ _ _) = return False
+hasFeed conn (RSSFeed rssurl  _ _ _ _) = do lst <- quickQuery' conn "SELECT rssurl FROM rss_feed WHERE rssurl = ?" [toSql rssurl]
+                                            return (length lst /= 0)
+
+populateFeed :: (IConnection c) => c -> RSSFeed -> IO RSSFeed
+populateFeed conn fd = fmg $ frowToFeed $ fhead $ quickQuery' conn "SELECT rssurl,url,title FROM rss_feed WHERE rssurl = ?" [rurl]
+    where rurl       = toSql $ fd_rssurl fd
+          fhead      = fmap head
+          frowToFeed = fmap rowToFeed
+          fmg        = fmap (mergeTwo fd)
+          mergeTwo :: RSSFeed -> RSSFeed -> RSSFeed
+          mergeTwo (RSSFeed rss _ _ _ tgs) (RSSFeed _ u t _ _) = RSSFeed rss u t Nothing tgs
 
 loadFeedItems :: (IConnection c) => c -> RSSFeed -> IO [RSSItem]
 loadFeedItems _ (RSSFeed Nothing _ _ _ _) = return []
