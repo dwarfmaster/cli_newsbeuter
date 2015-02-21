@@ -155,3 +155,25 @@ loadFeedsFromFile path = do file <- readFile path
                | otherwise   = Just $ RSSFeed (Just $ head parts) Nothing Nothing Nothing (Just $ tail parts)
               where parts = cutLine str "" False
 
+-- Initialisation of data
+newFeeds :: (IConnection c) => c -> [RSSFeed] -> IO [RSSFeed]
+newFeeds _ [] = return []
+newFeeds conn (l:ls) = do b <- hasFeed conn l
+                          if b then newFeeds conn ls
+                          else do nfds <- newFeeds conn ls
+                                  return $ l : nfds
+
+addNewFeed :: (IConnection c) => c -> RSSFeed -> IO()
+addNewFeed conn fd = addFeed conn toadd
+    where toadd = setTitle fd $ fd_rssurl fd
+          setTitle :: RSSFeed -> Maybe String -> RSSFeed
+          setTitle (RSSFeed r u _ ty tgs) title = RSSFeed r u title ty tgs
+
+-- TODO Find right type for this function
+initing urls db = do conn <- connectSqlite3 db
+                     ufds <- loadFeedsFromFile urls
+                     nfds <- newFeeds conn ufds
+                     mapM_ (addNewFeed conn) nfds
+                     fds <- mapM (populateFeed conn) ufds
+                     return (conn, fds)
+
