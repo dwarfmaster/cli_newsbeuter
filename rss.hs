@@ -231,3 +231,12 @@ getPathCache args = do path <- getDefaultDir arg
                        return $ path ++ "/cache.db"
     where arg = getArg args "cache"
 
+-- Main process ------------------------------------------------------
+main :: IO()
+main = do args  <- getArgs
+          urls  <- getPathUrls args
+          cache <- getPathCache args
+          (conn, feeds) <- initing urls cache
+          mapM_ (\x -> let (Just t) = fd_title x in putStrLn t) feeds
+          disconnect conn
+
