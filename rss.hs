@@ -5,11 +5,13 @@ import Text.XML.Light
 import Text.Feed.Import
 import Text.Feed.Export
 import System.Environment
+import System.Directory
 import Database.HDBC
 import Database.HDBC.Sqlite3 (connectSqlite3)
 import Data.Convertible.Base
+import Control.Exception
 
--- Data
+-- Data --------------------------------------------------------------
 data RSSItem = RSSItem { it_title       :: Maybe String
                        , it_url         :: Maybe String
                        , it_feed_url    :: Maybe String
@@ -38,7 +40,7 @@ showFDType Exec   = "Exec"
 instance Show FDType where
     show = showFDType
 
--- Database Querying
+-- Database Querying -------------------------------------------------
 rowToFeed :: [SqlValue] -> RSSFeed
 rowToFeed (r:u:t:[]) = RSSFeed (Just $ fromSql r) (Just $ fromSql u) (Just $ fromSql t) Nothing Nothing
 rowToFeed _          = RSSFeed Nothing Nothing Nothing Nothing Nothing
@@ -77,7 +79,7 @@ loadFeedItems conn fd = do query <- quickQuery' conn "SELECT title,url,feedurl,a
                               intToBool 0 = False
                               intToBool _ = True
 
--- Database writing (caller must call commit itself)
+-- Database writing (caller must call commit itself) -----------------
 addFeed :: (IConnection c) => c -> RSSFeed -> IO ()
 addFeed conn fd = do insert_if conn r
                      updateFeed conn fd
@@ -123,7 +125,7 @@ updateItem c (RSSItem t u f d a g p eu et id      urd) = do update_if c t  id "t
           bti (Just True)  = Just 1
           bti (Just False) = Just 0
 
--- Load RSSFeeds from url file
+-- Load RSSFeeds from url file ---------------------------------------
 cutLine :: String -> String -> Bool -> [String]
 cutLine ""       ""    _     = []
 cutLine ""       chunk _     = [chunk]
@@ -155,7 +157,7 @@ loadFeedsFromFile path = do file <- readFile path
                | otherwise   = Just $ RSSFeed (Just $ head parts) Nothing Nothing Nothing (Just $ tail parts)
               where parts = cutLine str "" False
 
--- Initialisation of data
+-- Initialisation of data --------------------------------------------
 newFeeds :: (IConnection c) => c -> [RSSFeed] -> IO [RSSFeed]
 newFeeds _ [] = return []
 newFeeds conn (l:ls) = do b <- hasFeed conn l
@@ -174,6 +176,58 @@ initing urls db = do conn <- connectSqlite3 db
                      ufds <- loadFeedsFromFile urls
                      nfds <- newFeeds conn ufds
                      mapM_ (addNewFeed conn) nfds
+                     commit conn
                      fds <- mapM (populateFeed conn) ufds
                      return (conn, fds)
+
+-- Get the paths -----------------------------------------------------
+safeGetEnv :: String -> IO (Maybe String)
+safeGetEnv var = handle mcatch $ menv var
+   where mcatch :: IOError -> IO (Maybe String)
+         mcatch _ = return Nothing
+         menv :: String -> IO (Maybe String)
+         menv var = do val <- getEnv var
+                       return $ Just val
+
+firstNotNothing :: [Maybe a] -> a -> a
+firstNotNothing []            d = d
+firstNotNothing (Nothing:ls)  d = firstNotNothing ls d
+firstNotNothing ((Just v):ls) _ = v
+
+getVar :: String -> String -> IO (Maybe String)
+getVar var end = do home <- safeGetEnv var
+                    mgetHome ('/':end) home
+    where mgetHome :: String -> Maybe String -> IO (Maybe String)
+          mgetHome _   Nothing  = return Nothing
+          mgetHome end (Just h) = return $ Just $ h ++ end
+
+getDefaultDir :: Maybe String -> IO String
+getDefaultDir sp = do vals <- sequence $ sup:def:env:xdg:[]
+                      return $ firstNotNothing vals "."
+    where env = getVar "XDG_DATA_HOME" "newsbeuter"
+          xdg = getVar "HOME" ".local/share/newsbeuter" >>= exists
+          def = getVar "HOME" ".newsbeuter" >>= exists
+          sup = return sp
+          exists :: Maybe String -> IO (Maybe String)
+          exists Nothing  = return Nothing
+          exists (Just p) = do b <- doesDirectoryExist p
+                               if b then return $ Just p 
+                               else return Nothing
+
+getArg :: [String] -> String -> Maybe String
+getArg (('-':'-':ag):v:vs) nm
+     | ag == nm  = Just v
+     | otherwise = getArg (v:vs) nm
+getArg (_:ags) nm = getArg ags nm
+getArg [] _ = Nothing
+
+getPathUrls :: [String] -> IO String
+getPathUrls args = do path <- getDefaultDir arg
+                      return $ path ++ "/urls"
+    where arg = getArg args "urls"
+
+getPathCache :: [String] -> IO String
+getPathCache args = do path <- getDefaultDir arg
+                       return $ path ++ "/cache.db"
+    where arg = getArg args "cache"
 
