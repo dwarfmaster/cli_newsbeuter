@@ -214,19 +214,6 @@ getVar var end = do home <- safeGetEnv var
           mgetHome _   Nothing  = return Nothing
           mgetHome end (Just h) = return $ Just $ h ++ end
 
-getDefaultDir :: Maybe String -> IO String
-getDefaultDir sp = do vals <- sequence $ sup:def:env:xdg:[]
-                      return $ firstNotNothing vals "."
-    where env = getVar "XDG_DATA_HOME" "newsbeuter"
-          xdg = getVar "HOME" ".local/share/newsbeuter" >>= exists
-          def = getVar "HOME" ".newsbeuter" >>= exists
-          sup = return sp
-          exists :: Maybe String -> IO (Maybe String)
-          exists Nothing  = return Nothing
-          exists (Just p) = do b <- doesDirectoryExist p
-                               if b then return $ Just p 
-                               else return Nothing
-
 getArg :: [String] -> String -> Maybe String
 getArg (('-':'-':ag):v:vs) nm
      | ag == nm  = Just v
@@ -234,21 +221,25 @@ getArg (('-':'-':ag):v:vs) nm
 getArg (_:ags) nm = getArg ags nm
 getArg [] _ = Nothing
 
-getPathUrls :: [String] -> IO String
-getPathUrls args = do path <- getDefaultDir arg
-                      return $ path ++ "/urls"
-    where arg = getArg args "urls"
-
-getPathCache :: [String] -> IO String
-getPathCache args = do path <- getDefaultDir arg
-                       return $ path ++ "/cache.db"
-    where arg = getArg args "cache"
+getDefaultDir :: [String] -> IO String
+getDefaultDir args = do vals <- sequence $ sup:def:env:xdg:[]
+                        return $ firstNotNothing vals "."
+    where env = getVar "XDG_DATA_HOME" "newsbeuter"
+          xdg = getVar "HOME" ".local/share/newsbeuter" >>= exists
+          def = getVar "HOME" ".newsbeuter" >>= exists
+          sup = return $ getArg args "dir"
+          exists :: Maybe String -> IO (Maybe String)
+          exists Nothing  = return Nothing
+          exists (Just p) = do b <- doesDirectoryExist p
+                               if b then return $ Just p 
+                               else return Nothing
 
 -- Main process ------------------------------------------------------
 main :: IO()
 main = do args  <- getArgs
-          urls  <- getPathUrls args
-          cache <- getPathCache args
+          dir   <- getDefaultDir args
+          let urls = dir ++ "/urls"
+          let cache = dir ++ "/cache.db"
           (conn, feeds) <- initing urls cache
           mapM_ (\x -> let (Just t) = fd_title x in putStrLn t) feeds
           disconnect conn
