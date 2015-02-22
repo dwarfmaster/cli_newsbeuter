@@ -3,7 +3,7 @@ module Main where
 
 import Text.XML.Light
 import Text.Feed.Import
-import Text.Feed.Export
+import Text.Feed.Query
 import System.Environment
 import System.Directory
 import System.Process
@@ -11,6 +11,8 @@ import System.Exit
 import Database.HDBC
 import Database.HDBC.Sqlite3 (connectSqlite3)
 import Data.Convertible.Base
+import Data.Convertible (convert)
+import Data.Time.Clock (UTCTime (..))
 import Data.List.Split
 import Data.Maybe
 import Data.List
@@ -241,6 +243,30 @@ download (RSSFeed (Just url) _ _ (Just Exec)   _) = dlExec cmd args
     where (cmd,args) = parseExec url
 download fd@(RSSFeed (Just _) _ _ Nothing      _) = download $ setType fd
 download _                                        = return Nothing
+
+-- Parsing xml feed --------------------------------------------------
+parseFeed :: RSSFeed -> String -> Maybe (RSSFeed, [RSSItem])
+parseFeed fd xml
+     | isNothing psfd = Nothing
+     | otherwise      = Just (setTitle fd $ getFeedTitle feed, map parseItem $ feedItems feed)
+    where psfd        = parseFeedString xml
+          (Just feed) = psfd
+          setTitle :: RSSFeed -> String -> RSSFeed
+          setTitle (RSSFeed r u _ tp tg) t = RSSFeed r u (Just t) tp tg
+
+parseItem v = RSSItem (getItemTitle       v)
+                      (getItemLink        v)
+                      Nothing
+                      (getItemDescription v)
+                      (getItemAuthor      v)
+                      (getItemId v >>= (\(_,g) -> Just g))
+                      (getItemPublishDate v >>= (>>= Just . utcTimeToEpochTime))
+                      (getItemEnclosure v >>= (\(e,_,_) -> Just e))
+                      (getItemEnclosure v >>= (\(_,e,_) -> e))
+                      Nothing
+                      Nothing
+    where utcTimeToEpochTime :: UTCTime -> Integer
+          utcTimeToEpochTime = convert
 
 -- Get the paths -----------------------------------------------------
 safeGetEnv :: String -> IO (Maybe String)
