@@ -180,6 +180,19 @@ initing urls db = do conn <- connectSqlite3 db
                      fds <- mapM (populateFeed conn) ufds
                      return (conn, fds)
 
+-- Feed manipulation -------------------------------------------------
+findType :: RSSFeed -> Maybe FDType
+findType (RSSFeed Nothing    _ _ _ _) = Nothing
+findType (RSSFeed (Just url) _ _ _ _) = Just $ typeFromUrl url
+    where typeFromUrl :: String -> FDType
+          typeFromUrl ('f':'i':'l':'t':'e':'r':_) = Filter
+          typeFromUrl ('e':'x':'e':'c':_)         = Exec
+          typeFromUrl _                           = Plain
+
+setType :: RSSFeed -> RSSFeed
+setType fd@(RSSFeed r u t _ tgs) = RSSFeed r u t tpe tgs
+    where tpe = findType fd
+
 -- Get the paths -----------------------------------------------------
 safeGetEnv :: String -> IO (Maybe String)
 safeGetEnv var = handle mcatch $ menv var
