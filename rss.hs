@@ -204,6 +204,14 @@ parseFilter str
           (id:fl:url:[]) = parts
           flct           = splitOn " " fl
 
+parseExec :: String -> (String,[String])
+parseExec str
+     | length parts /= 2 || id /= "exec" || ex == "" = ("", [])
+     | otherwise = (head exct, tail exct)
+    where parts      = splitOn ":" str
+          (id:ex:[]) = parts
+          exct       = splitOn " " ex
+
 -- Downloading a feed ------------------------------------------------
 adapt :: (ExitCode, String, String) -> IO (Maybe String)
 adapt (ExitFailure _, _, _) = return Nothing
@@ -216,6 +224,9 @@ dlUrl url = readProcessWithExitCode cmd args "" >>= adapt
 
 dlFilter :: String -> [String] -> String -> IO (Maybe String)
 dlFilter cmd args input = readProcessWithExitCode cmd args input >>= adapt
+
+dlExec :: String -> [String] -> IO (Maybe String)
+dlExec cmd args = dlFilter cmd args ""
 
 -- Get the paths -----------------------------------------------------
 safeGetEnv :: String -> IO (Maybe String)
