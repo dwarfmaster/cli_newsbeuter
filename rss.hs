@@ -11,6 +11,7 @@ import System.Exit
 import Database.HDBC
 import Database.HDBC.Sqlite3 (connectSqlite3)
 import Data.Convertible.Base
+import Data.List.Split
 import Control.Exception
 
 -- Data --------------------------------------------------------------
@@ -195,14 +196,26 @@ setType :: RSSFeed -> RSSFeed
 setType fd@(RSSFeed r u t _ tgs) = RSSFeed r u t tpe tgs
     where tpe = findType fd
 
+parseFilter :: String -> (String,[String],String)
+parseFilter str
+     | length parts /= 3 || id /= "filter" || fl == "" || url == "" = ("", [], "")
+     | otherwise = (head flct, tail flct, url)
+    where parts          = splitOn ":" str
+          (id:fl:url:[]) = parts
+          flct           = splitOn " " fl
+
 -- Downloading a feed ------------------------------------------------
-dlUrlToString :: String -> IO (Maybe String)
-dlUrlToString url = readProcessWithExitCode cmd args "" >>= adapt
+adapt :: (ExitCode, String, String) -> IO (Maybe String)
+adapt (ExitFailure _, _, _) = return Nothing
+adapt (ExitSuccess, out, _) = return $ Just out
+
+dlUrl :: String -> IO (Maybe String)
+dlUrl url = readProcessWithExitCode cmd args "" >>= adapt
     where cmd  = "/usr/bin/curl"
           args = [url]
-          adapt :: (ExitCode, String, String) -> IO (Maybe String)
-          adapt (ExitFailure _, _, _) = return Nothing
-          adapt (ExitSuccess, out, _) = return $ Just out
+
+dlFilter :: String -> [String] -> String -> IO (Maybe String)
+dlFilter cmd args input = readProcessWithExitCode cmd args input >>= adapt
 
 -- Get the paths -----------------------------------------------------
 safeGetEnv :: String -> IO (Maybe String)
