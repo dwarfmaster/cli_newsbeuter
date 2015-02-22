@@ -12,6 +12,8 @@ import Database.HDBC
 import Database.HDBC.Sqlite3 (connectSqlite3)
 import Data.Convertible.Base
 import Data.List.Split
+import Data.Maybe
+import Data.List
 import Control.Exception
 
 -- Data --------------------------------------------------------------
@@ -198,11 +200,12 @@ setType fd@(RSSFeed r u t _ tgs) = RSSFeed r u t tpe tgs
 
 parseFilter :: String -> (String,[String],String)
 parseFilter str
-     | length parts /= 3 || id /= "filter" || fl == "" || url == "" = ("", [], "")
+     | id /= "filter" || fl == "" || url == "" = ("", [], "")
      | otherwise = (head flct, tail flct, url)
-    where parts          = splitOn ":" str
-          (id:fl:url:[]) = parts
-          flct           = splitOn " " fl
+    where parts        = splitOn ":" str
+          (id:fl:urls) = parts
+          url          = intercalate ":" urls
+          flct         = splitOn " " fl
 
 parseExec :: String -> (String,[String])
 parseExec str
@@ -227,6 +230,17 @@ dlFilter cmd args input = readProcessWithExitCode cmd args input >>= adapt
 
 dlExec :: String -> [String] -> IO (Maybe String)
 dlExec cmd args = dlFilter cmd args ""
+
+download :: RSSFeed -> IO (Maybe String)
+download (RSSFeed (Just url) _ _ (Just Plain)  _) = dlUrl url
+download (RSSFeed (Just ul)  _ _ (Just Filter) _) = do dl <- dlUrl url
+                                                       if isNothing dl then return Nothing
+                                                       else let (Just s) = dl in dlFilter c a s
+    where (c,a,url) = parseFilter ul
+download (RSSFeed (Just url) _ _ (Just Exec)   _) = dlExec cmd args
+    where (cmd,args) = parseExec url
+download fd@(RSSFeed (Just _) _ _ Nothing      _) = download $ setType fd
+download _                                        = return Nothing
 
 -- Get the paths -----------------------------------------------------
 safeGetEnv :: String -> IO (Maybe String)
