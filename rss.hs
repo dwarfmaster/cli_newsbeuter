@@ -68,23 +68,37 @@ populateFeed conn fd = do query <- quickQuery' conn "SELECT rssurl,url,title FRO
           mergeTwo :: RSSFeed -> RSSFeed -> RSSFeed
           mergeTwo (RSSFeed rss _ _ _ tgs) (RSSFeed _ u t _ _) = RSSFeed rss u t Nothing tgs
 
+findByGuid :: (IConnection c) => c -> RSSItem -> IO Bool
+findByGuid conn (RSSItem _ _ _ _ _ (Just g) _ _ _ _ _) =
+        do query <- quickQuery' conn "SELECT guid FROM rss_item WHERE guid = ?" [toSql g]
+           return $ length query /= 0
+findByGuid _ _ = return False
+
+rowToItem :: [SqlValue] -> RSSItem
+rowToItem (t:u:f:a:g:p:eu:et:id:ur:[]) = RSSItem (mfsql t)  (mfsql u)  (mfsql f)
+                                               Nothing    (mfsql a)  (mfsql g)
+                                               (mfsql p)  (mfsql eu) (mfsql et)
+                                               (mfsql id) (bfsql ur)
+    where mfsql :: (Convertible SqlValue a) => SqlValue -> Maybe a
+          mfsql v = Just $ fromSql v
+          bfsql :: SqlValue -> Maybe Bool
+          bfsql v = Just $ intToBool $ fromSql v
+              where intToBool :: Int -> Bool
+                    intToBool 0 = False
+                    intToBool _ = True
+
+readItem :: (IConnection c) => c -> RSSItem -> IO RSSItem
+readItem conn it@(RSSItem t u f d a (Just g) p eu et id ur) =
+        do query <- quickQuery' conn "SELECT title,url,feedurl,author,guid,pubDate,enclosure_url,enclosure_type,id,unread FROM rss_item WHERE guid = ?" [toSql g]
+           if query == [] then return it
+           else return $ rowToItem $ head query
+readItem conn it = return it
+
 loadFeedItems :: (IConnection c) => c -> RSSFeed -> IO [RSSItem]
 loadFeedItems _ (RSSFeed Nothing _ _ _ _) = return []
 loadFeedItems conn fd = do query <- quickQuery' conn "SELECT title,url,feedurl,author,guid,pubDate,enclosure_url,enclosure_type,id,unread FROM rss_item WHERE feedurl = ?" [url]
                            return $ map rowToItem query
     where url = toSql $ fd_rssurl fd
-          rowToItem :: [SqlValue] -> RSSItem
-          rowToItem (t:u:f:a:g:p:eu:et:id:ur:[]) = RSSItem (mfsql t)  (mfsql u)  (mfsql f)
-                                                           Nothing    (mfsql a)  (mfsql g)
-                                                           (mfsql p)  (mfsql eu) (mfsql et)
-                                                           (mfsql id) (bfsql ur)
-              where mfsql :: (Convertible SqlValue a) => SqlValue -> Maybe a
-                    mfsql v = Just $ fromSql v
-                    bfsql :: SqlValue -> Maybe Bool
-                    bfsql v = Just $ intToBool $ fromSql v
-                        where intToBool :: Int -> Bool
-                              intToBool 0 = False
-                              intToBool _ = True
 
 -- Database writing (caller must call commit itself) -----------------
 addFeed :: (IConnection c) => c -> RSSFeed -> IO ()
@@ -267,6 +281,28 @@ parseItem v = RSSItem (getItemTitle       v)
                       Nothing
     where utcTimeToEpochTime :: UTCTime -> Integer
           utcTimeToEpochTime = convert
+
+-- Updating a feed ---------------------------------------------------
+dlUpdateFeed :: (IConnection c) => c -> RSSFeed -> IO [RSSItem]
+dlUpdateFeed conn fd = do dlxml <- download fd
+                          let psfd = dlxml >>= parseFeed fd
+                          if isNothing psfd then return []
+                          else let (Just (feed,its)) = psfd in upgradeFeed conn 
+                                                                           feed
+                                                                           $ map (prep feed) its
+    where prep :: RSSFeed -> RSSItem -> RSSItem
+          prep fd@(RSSFeed r@(Just _) _ _ _ _) (RSSItem t u Nothing d a g p eu et id ur) = prep fd $ RSSItem t u r d a g p eu et id ur
+          prep fd (RSSItem t u@(Just _) r d a Nothing p eu et id ur) = prep fd $ RSSItem t u r d a u p eu et id ur
+          prep fd (RSSItem t u r d a g p eu et id Nothing) = prep fd $ RSSItem t u r d a g p eu et id (Just False)
+          prep _ it = it
+
+upgradeFeed :: (IConnection c) => c -> RSSFeed -> [RSSItem] -> IO [RSSItem]
+upgradeFeed conn _ its = mapM (procFDItem conn) its
+    where procFDItem :: (IConnection c) => c -> RSSItem -> IO RSSItem
+          procFDItem conn it = do b <- findByGuid conn it
+                                  if b then readItem conn it
+                                  else do addItem conn it
+                                          return it
 
 -- Get the paths -----------------------------------------------------
 safeGetEnv :: String -> IO (Maybe String)
